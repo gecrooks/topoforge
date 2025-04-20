@@ -325,7 +325,7 @@ def create_stl(
     # (I think this is necessary to make sure we don't have large number of co-planer triangles
     # Which seems to upset the CSG module)
     # FIXME: Do I still need this hack?
-    # surface += 0.001 * np.random.uniform(size=surface.shape)
+    surface += 0.001 * np.random.uniform(size=surface.shape)
 
     if verbose:
         print("Triangulating surface...")
@@ -435,10 +435,12 @@ def elevation_to_surface(
         )
 
         elevation_array = np.where(
-            ((elevation_array) <= params.sea_level) & ~exclude,
+            (elevation_array <= params.sea_level) & ~exclude,
             dropped_sea_level,
             elevation_array,
         )
+
+
 
         # # More complicated algorithm that smooths shoreline. Not needed.
         # from scipy import signal
@@ -527,14 +529,14 @@ def triangulate_surface(
             surface[x, y],
             (surface[x, y][0], surface[x, y][1], bot_height),
             (surface[x + 1, y][0], surface[x + 1, y][1], bot_height),
-        )
+        )[::-1]
 
         model.add_face(tri)
         tri = (
             surface[x, y],
             (surface[x + 1, y][0], surface[x + 1, y][1], bot_height),
             surface[x + 1, y],
-        )
+        )[::-1]
         model.add_face(tri)
 
     # west
@@ -564,13 +566,13 @@ def triangulate_surface(
             surface[x, s],
             (xcoords[s], ycoords[s], bot_height),
             (xcoords[s + 1], ycoords[s + 1], bot_height),
-        )
+        )[::-1]
         model.add_face(tri)
         tri = (
             surface[x, s],
             (xcoords[s + 1], ycoords[s + 1], bot_height),
             surface[x, s + 1],
-        )
+        )[::-1]
         model.add_face(tri)
 
     # # Bot surface
@@ -626,63 +628,59 @@ def triangulate_base(
     westing = np.linspace(west, east, steps)
     northing = np.linspace(north, south, steps)
 
+
     # South
     south_top = [
         lla_to_model((south, w, params.min_altitude), origin, params) for w in westing
     ]
-    south_base = [lla_to_model((south, w, base_alt), origin, params) for w in westing]
-    south_bot = [
-        find_point_on_line(llat, llab, bot) for llat, llab in zip(south_top, south_base)
-    ]
+    south_bot = [lla_to_model((south, w, base_alt), origin, params) for w in westing]
 
     for i in range(steps - 1):
         model.add_face([south_top[i], south_bot[i], south_top[i + 1]])
         model.add_face([south_top[i + 1], south_bot[i], south_bot[i + 1]])
 
+
     # North
     north_top = [
         lla_to_model((north, w, params.min_altitude), origin, params) for w in westing
     ]
-    north_base = [lla_to_model((north, w, base_alt), origin, params) for w in westing]
-    north_bot = [
-        find_point_on_line(llat, llab, bot) for llat, llab in zip(north_top, north_base)
-    ]
+    north_bot = [lla_to_model((north, w, base_alt), origin, params) for w in westing]
 
     for i in range(steps - 1):
         model.add_face([north_top[i], north_bot[i], north_top[i + 1]][::-1])
         model.add_face([north_top[i + 1], north_bot[i], north_bot[i + 1]][::-1])
 
+
     # East
     east_top = [
         lla_to_model((n, east, params.min_altitude), origin, params) for n in northing
     ]
-    east_base = [lla_to_model((n, east, base_alt), origin, params) for n in northing]
-    east_bot = [
-        find_point_on_line(llat, llab, bot) for llat, llab in zip(east_top, east_base)
-    ]
+    east_bot = [lla_to_model((n, east, base_alt), origin, params) for n in northing]
+
 
     for i in range(steps - 1):
         model.add_face([east_top[i], east_bot[i], east_top[i + 1]][::-1])
         model.add_face([east_top[i + 1], east_bot[i], east_bot[i + 1]][::-1])
 
+    # Makes CG unhappy
     # model.add_face([east_top[0], east_bot[0], east_top[-1]][::-1])
     # model.add_face([east_top[-1], east_bot[0], east_bot[-1]][::-1])
+
 
     # West
     west_top = [
         lla_to_model((n, west, params.min_altitude), origin, params) for n in northing
     ]
-    west_base = [lla_to_model((n, west, base_alt), origin, params) for n in northing]
-    west_bot = [
-        find_point_on_line(llat, llab, bot) for llat, llab in zip(west_top, west_base)
-    ]
+    west_bot = [lla_to_model((n, west, base_alt), origin, params) for n in northing]
 
     for i in range(steps - 1):
         model.add_face([west_top[i], west_bot[i], west_top[i + 1]])
         model.add_face([west_top[i + 1], west_bot[i], west_bot[i + 1]])
 
+    # Makes CG unhappy
     # model.add_face([west_top[0], west_bot[0], west_top[-1]])
     # model.add_face([west_top[-1], west_bot[0], west_bot[-1]])
+
 
     # bot of base
     for i in range(steps - 1):
@@ -927,19 +925,6 @@ def corners_to_model(
     return west_north, west_south, east_south, east_north
 
 
-# FIXME: Remove
-# This routine no longer necessary now using projection. Should be removed.
-def find_point_on_line(p1, p2, z3):
-    x1, y1, z1 = p1
-    x2, y2, z2 = p2
-
-    if z2 == z1:  # Avoid division by zero
-        raise ValueError("Points p1 and p2 have the same z coordinate.")
-
-    x3 = x1 + (x2 - x1) * ((z3 - z1) / (z2 - z1))
-    y3 = y1 + (y2 - y1) * ((z3 - z1) / (z2 - z1))
-
-    return x3, y3, z3
 
 
 def lambert_conformal_conic(

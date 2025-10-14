@@ -98,7 +98,7 @@ class STLParameters:
     magnet_diameter: MM = 6.00
     magnet_padding: MM = 0.025
     magnet_depth: MM = 2.00
-    magnet_recess: MM = 0.10
+    magnet_recess: MM = 0.15
     magnet_sides: int = 24
 
     pin_holes: bool = True
@@ -325,7 +325,7 @@ def create_stl(
     # (I think this is necessary to make sure we don't have large number of co-planer triangles
     # Which seems to upset the CSG module)
     # FIXME: Do I still need this hack?
-    surface += 0.001 * np.random.uniform(size=surface.shape)
+    # surface += 0.001 * np.random.uniform(size=surface.shape)
 
     if verbose:
         print("Triangulating surface...")
@@ -421,7 +421,7 @@ def elevation_to_surface(
     steps = len(ycoords)
     elevation_array = np.asarray(elevation.to_array()).reshape((steps, steps)).T
 
-    # Missing date will be nan
+    # Missing data will be nan
     elevation_array = np.nan_to_num(elevation_array, nan=0.0)
 
     if params.drop_sea_level:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2023, Gavin E. Crooks and contributors
+# Copyright 2023-25, Gavin E. Crooks and contributors
 #
 # This source code is licensed under the MIT License
 # found in the LICENSE file in the root directory of this source tree.
@@ -19,92 +19,68 @@
 # Gavin E. Crooks 2023
 
 
+import numpy as np
+import trimesh
+from trimesh import transformations
 
-import ezdxf
-from ezdxf.render.forms import cube, cylinder_2p
-from ezdxf.addons.pycsg import CSG
-from ezdxf.addons.meshex import stl_dumps
-
-# create new DXF document
-doc = ezdxf.new()
-msp = doc.modelspace()
 
 from landscape2stl import STLParameters
 
-model = ezdxf.render.MeshBuilder()
-
-
-# create same geometric primitives as MeshTransformer() objects
-cube1 = cube()
-cube1 = cube1.scale(20, 20, 10)
-
-
-model_csg = CSG(cube1)
-
-
 params = STLParameters()
-magnet_radius = (params.magnet_diameter)/2 + params.magnet_padding
+magnet_radius = (params.magnet_diameter) / 2 + params.magnet_padding
 magnet_depth = params.magnet_depth + params.magnet_recess
 magnet_sides = params.magnet_sides
 
 pin_length = params.pin_length
-pin_radius = (params.pin_diameter/2) + params.pin_padding
+pin_radius = (params.pin_diameter / 2) + params.pin_padding
 pin_sides = params.pin_sides
 
 
-cylinder = cylinder_2p(
-    count=magnet_sides,
-    base_center=(0, -magnet_depth, 0),
-    top_center=(0, magnet_depth, 0),
-    radius=magnet_radius,
+rotate_z_to_y = transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
+
+# Base block (20 mm x 20 mm x 10 mm) centered at origin.
+base = trimesh.creation.box(extents=(20.0, 20.0, 10.0))
+
+holes = []
+
+
+cylinder = trimesh.creation.cylinder(
+    radius=magnet_radius, height=magnet_depth * 2, sections=magnet_sides
 )
-cylinder.translate(-5, 10, 0)
-model_csg = model_csg - CSG(cylinder)
+cylinder.apply_transform(rotate_z_to_y)
+cylinder.apply_translation([-5, 10.0, 0.0])
+holes.append(cylinder)
 
-cylinder = cylinder_2p(
-    count=magnet_sides,
-    base_center=(0, -magnet_depth, 0),
-    top_center=(0, magnet_depth, 0),
-    radius=magnet_radius,
+
+cylinder = trimesh.creation.cylinder(
+    radius=magnet_radius, height=magnet_depth * 2, sections=magnet_sides
 )
-cylinder.translate(5, 10, 0)
-model_csg = model_csg - CSG(cylinder)
+cylinder.apply_transform(rotate_z_to_y)
+cylinder.apply_translation([5, 10.0, 0.0])
+holes.append(cylinder)
 
 
-cylinder = cylinder_2p(
-    count=pin_sides,
-    base_center=(0, -pin_length, 0),
-    top_center=(0, pin_length, 0),
-    radius=1,
+cylinder = trimesh.creation.cylinder(
+    radius=pin_radius, height=pin_length * 2, sections=pin_sides
 )
-cylinder.translate(-5,-10, 0)
-model_csg = model_csg - CSG(cylinder)
+cylinder.apply_transform(rotate_z_to_y)
+cylinder.apply_translation([-5, -10.0, 0.0])
+holes.append(cylinder)
 
-cylinder = cylinder_2p(
-    count=pin_sides,
-    base_center=(0, -pin_length, 0),
-    top_center=(0, pin_length, 0),
-    radius=1,
+cylinder = trimesh.creation.cylinder(
+    radius=pin_radius, height=pin_length * 2, sections=pin_sides
 )
-cylinder.translate(5, -10, 0)
-model_csg = model_csg - CSG(cylinder)
+cylinder.apply_transform(rotate_z_to_y)
+cylinder.apply_translation([5, -10.0, 0.0])
+holes.append(cylinder)
 
 
-offset = params.bolt_hole_offset
-sides = params.bolt_hole_sides
-radius = params.bolt_hole_padding + params.bolt_hole_diameter/2 
-depth = params.bolt_hole_depth
-cylinder = cylinder_2p(
-    count=sides, base_center=(0, 0, -depth), top_center=(0, 0, depth), radius=radius
-)
-cylinder.translate([0, 0, -5])
-model_csg = model_csg - CSG(cylinder)
+model = trimesh.boolean.difference([base, *holes], backend="blender")
+model.remove_unreferenced_vertices()
+model.process(validate=True)
 
 
-
-s = stl_dumps(model_csg.mesh())
-
-filename = 'magnets.stl'
-
-with open(filename, "w") as f:
-    f.write(s)
+print(f"is closed surface? {model.is_watertight}")
+print(f"is manifold? {model.is_winding_consistent}")
+filename = "proto_magnets.stl"
+model.export(filename)

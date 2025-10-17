@@ -11,7 +11,7 @@
 # See README for more information
 #
 #
-# Gavin E. Crooks 2023
+# Gavin E. Crooks 2023-2025
 #
 
 # Note to self:
@@ -34,7 +34,6 @@ import trimesh
 import us
 import xarray as xr
 from numpy.typing import ArrayLike
-from trimesh import transformations
 from typing_extensions import TypeAlias
 
 # We use many units and coordinate systems.
@@ -325,7 +324,7 @@ def create_stl(
     model.fix_normals()
     model.update_faces(model.unique_faces())
 
-    model = add_base_holes(model, boundary, origin, params, steps)
+    model = add_base_holes(model, boundary, origin, params)
     model.remove_unreferenced_vertices()
     model.fix_normals()
     model.update_faces(model.unique_faces())
@@ -466,6 +465,7 @@ def triangulate_surface(
     def bottom_idx(x: int, y: int) -> int:
         return offset + x * steps + y
 
+    # Top surface
     for x in range(steps - 1):
         for y in range(steps - 1):
             v00 = top_idx(x, y)
@@ -479,18 +479,40 @@ def triangulate_surface(
                 faces.append([v01, v00, v10])
                 faces.append([v10, v11, v01])
 
-    for x in range(steps - 1):
-        for y in range(steps - 1):
-            v00 = bottom_idx(x, y)
-            v10 = bottom_idx(x + 1, y)
-            v01 = bottom_idx(x, y + 1)
-            v11 = bottom_idx(x + 1, y + 1)
-            if ((x + y) % 2) == 0:
-                faces.append([v00, v11, v10])
-                faces.append([v00, v01, v11])
-            else:
-                faces.append([v01, v10, v00])
-                faces.append([v10, v11, v01])
+    # Bottom Surface
+
+    for x in range(1, steps - 2):
+        south0 = bottom_idx(x, 0)
+        south1 = bottom_idx(x + 1, 0)
+        north0 = bottom_idx(x, steps - 1)
+        north1 = bottom_idx(x + 1, steps - 1)
+
+        faces.append([south0, north0, south1])
+        faces.append([south1, north0, north1])
+
+    for y in range(0, steps - 1):
+        south0 = bottom_idx(1, 0)
+        west0 = bottom_idx(0, y)
+        west1 = bottom_idx(0, y + 1)
+        faces.append([west0, west1, south0])
+
+    faces.append([bottom_idx(1, 0), bottom_idx(0, steps - 1), bottom_idx(1, steps - 1)])
+
+    for y in range(0, steps - 1):
+        north0 = bottom_idx(steps - 2, steps - 1)
+        east0 = bottom_idx(steps - 1, y)
+        east1 = bottom_idx(steps - 1, y + 1)
+        faces.append([east0, north0, east1])
+
+    faces.append(
+        [
+            bottom_idx(steps - 2, steps - 1),
+            bottom_idx(steps - 1, 0),
+            bottom_idx(steps - 2, 0),
+        ]
+    )
+
+    # Sides
 
     for x in range(steps - 1):
         t0 = top_idx(x, 0)
@@ -537,7 +559,6 @@ def add_base_holes(
     boundary: BBox,
     origin: LLA,
     params: STLParameters,
-    steps: int,
 ):
 
     south, west, north, east = boundary
@@ -553,9 +574,6 @@ def add_base_holes(
 
     bot_corners = corners_to_model(boundary, base_alt, origin, params)
     west_north_bot, west_south_bot, east_south_bot, east_north_bot = bot_corners
-
-    mag_corners = corners_to_model(boundary, magnets_alt, origin, params)
-    west_north_mag, west_south_mag, east_south_mag, east_north_mag = mag_corners
 
     def make_hole(sides, depth, radius, center, axis):
         base_axis = np.array([0.0, 0.0, 1.0])

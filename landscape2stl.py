@@ -35,6 +35,7 @@ import us
 import xarray as xr
 from numpy.typing import ArrayLike
 from typing_extensions import TypeAlias
+import pyvista 
 
 # We use many units and coordinate systems.
 # Use TypeAlias's in desperate effort to
@@ -54,6 +55,8 @@ BBox: TypeAlias = tuple[
 ]  # Geographic bounding box: south, west, north, east
 
 
+
+
 # standard_scales = [
 #     15_625,  # about 4" to 1 mile
 #     31_250,  # about 2" to 1 mile
@@ -64,6 +67,7 @@ BBox: TypeAlias = tuple[
 #     1_000_000,  # about 1" to 16 miles
 # ]
 
+default_text = "TopoForge"
 
 default_cache = "cache"
 
@@ -109,6 +113,7 @@ class STLParameters:
     bottom_hole_depth: MM = 9.1
     bottom_hole_sides: int = 24
 
+
     def __post_init__(self):
         if not self.magnet_spacing:
             self.magnet_spacing = self.scale / 2_000_000
@@ -153,6 +158,7 @@ def main() -> int:
 
     parser.add_argument("--scale", dest="scale", type=int, help="Map scale")
 
+
     parser.add_argument(
         "--exaggeration",
         dest="exaggeration",
@@ -161,34 +167,35 @@ def main() -> int:
         help="Vertical exaggeration",
     )
 
-    # parser.add_argument(
-    #     "--resolution",
-    #     dest="resolution",
-    #     default=default_params.resolution,
-    #     choices=default_params.resolution_choices,
-    #     type=int,
-    #     help="DEM resolution",
-    # )
-
     parser.add_argument(
         "--magnets", dest="magnets", type=float, help="Magnet spacing (in degrees)"
     )
 
-    parser.add_argument("--name", dest="name", type=str, help="Filename for model")
+    parser.add_argument("--filename", dest="filename", type=str, help="Filename for model")
 
     parser.add_argument("-v", "--verbose", action="store_true")
 
     args = vars(parser.parse_args())
     name = None
 
+    text = default_text
+
     if args["quad"] is not None:
+  
+
         name = args["quad"].lower().replace(" ", "_")
         coords = quad_coordinates(name, args["state"])
         args["coordinates"] = coords
+
+        label = usgs_quadrangle_label(coords[0], coords[3])
+
+        text += '\n' + args["quad"] + ', ' + args["state"] + '\n'+label
+
+
         # args["scale"] = 62_500 # params default to this scale
 
-        if args["name"] is None:
-            args["name"] = "quad_" + args["state"].lower() + "_" + name
+        if args["filename"] is None:
+            args["filename"] = "quad_" + args["state"].lower() + "_" + name
 
     if not args["coordinates"]:
         parser.print_help()
@@ -196,6 +203,7 @@ def main() -> int:
 
     if args["scale"] is None:
         args["scale"] = default_params.scale
+
 
     params = STLParameters(
         scale=args["scale"],
@@ -205,8 +213,12 @@ def main() -> int:
         # projection=args["projection"],
     )
 
+
+    text = text + '\n' + 'scale 1 : '+f"{params.scale:,}"
+
+
     create_stl(
-        params, args["coordinates"], filename=args["name"], verbose=args["verbose"]
+        params, args["coordinates"], filename=args["filename"], text=text,verbose=args["verbose"]
     )
 
     return 0
@@ -289,6 +301,7 @@ def create_stl(
     params: STLParameters,
     boundary: BBox,
     filename: Optional[str] = None,
+    text: str = "",
     verbose: bool = False,
 ) -> None:
     if verbose:
@@ -320,14 +333,9 @@ def create_stl(
         print("Triangulating surface...")
 
     model = triangulate_surface(surface, boundary, origin, params)
-    model.remove_unreferenced_vertices()
-    model.fix_normals()
-    model.update_faces(model.unique_faces())
-
     model = add_base_holes(model, boundary, origin, params)
-    model.remove_unreferenced_vertices()
-    model.fix_normals()
-    model.update_faces(model.unique_faces())
+    model = add_base_text(model, text)
+
 
     if verbose:
         print("Faces:", len(model.faces))
@@ -551,6 +559,12 @@ def triangulate_surface(
         faces=np.asarray(faces, dtype=np.int64),
         process=False,
     )
+
+    mesh.remove_unreferenced_vertices()
+    mesh.fix_normals()
+    mesh.update_faces(mesh.unique_faces())
+
+
     return mesh
 
 
@@ -690,6 +704,42 @@ def add_base_holes(
     model.remove_unreferenced_vertices()
     model.process(validate=True)
 
+
+    model.remove_unreferenced_vertices()
+    model.fix_normals()
+    model.update_faces(model.unique_faces())
+
+
+    return model
+
+
+def add_base_text(model, text):
+    lines = text.splitlines()
+
+    height = 5
+    depth = 1
+
+    meshes = []
+
+    z_min = model.bounds[0, 2]
+
+    for i, line in enumerate(lines):
+        text_mesh = pyvista.Text3D(line, height=height, depth=depth, center=[0,-i*height*1.5,z_min])
+        trimesh_mesh = trimesh.Trimesh(
+            vertices=text_mesh.points,
+            faces=text_mesh.faces.reshape(-1, 4)[:, 1:4]
+        )
+        trimesh_mesh.remove_unreferenced_vertices()
+        trimesh_mesh.process(validate=True)
+        trimesh_mesh.fix_normals()
+        trimesh_mesh.update_faces(trimesh_mesh.unique_faces())        
+        meshes.append(trimesh_mesh)
+
+    text_model = trimesh.boolean.union(meshes)
+    text_model.apply_scale([-1, 1, 1])
+
+    model = trimesh.boolean.difference([model, text_model])
+
     return model
 
 
@@ -742,6 +792,41 @@ def corners_to_model(
     west_south: ENU = lla_to_model((south, west, alt), origin, params)
 
     return west_north, west_south, east_south, east_north
+
+
+def usgs_quadrangle_label(south, east):
+    """
+    Return the USGS 7.5-minute quadrangle label for given lat/lon.
+    Format: DDDLLLrx where:
+    - DDD = integer latitude of SE corner of 1° block
+    - LLL = integer longitude of SE corner of 1° block
+    - r = column (a–h), west to east
+    - x = row (1–8), south to north
+    """
+    lat = south
+    lon = east
+    if not (-180 <= lon <= 0 and 0 <= lat <= 90):
+        raise ValueError("Latitude must be in [-90, 90], Longitude in [-180, 180]")
+
+    # Normalize to SE corner of 1° block
+    block_lat = math.floor(lat)
+    block_lon = math.ceil(lon)
+
+    # Offset within block (0–1)
+    lat_offset = lat - block_lat
+    lon_offset = -(lon - block_lon)
+
+
+    # Index within 8x8 grid (7.5 arcmin = 1/8 degree)
+    row = int((lat_offset * 8) // 1)  # 0 (south) to 7 (north)
+    col = int((lon_offset * 8) // 1)  # 0 (west) to 7 (east)
+
+    # Convert column to letter (a–h), row to 1–8 (south to north)
+    col_letter = chr(ord('a') + row)
+    row_number = col + 1
+
+    label = f"{block_lat:02d}{abs(block_lon):03d}{col_letter}{row_number}"
+    return label
 
 
 def lambert_conformal_conic(

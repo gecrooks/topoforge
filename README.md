@@ -1,10 +1,10 @@
 # landscape2stl: Modular, high resolution terrain models for 3D printing
 
 
-[Source](https://github.com/gecrooks/landscape2stl)
+[Source](https://github.com/gecrooks/topoforge)
 
 
-Gavin E. Crooks (2024)
+Gavin E. Crooks (2024-2025)
 
 
 ![Yosemite](images/yosemite.jpeg)
@@ -14,17 +14,23 @@ Yosemite valley and environs, scale about 1" to 1 mile, overall size 42"x43" (a 
 Yosemite was printed in 30 segments, held together by magnets installed along the base.
 
 
-
-The python script landscape2stl.py generates large scale terrain models as STL files suitable for 3D printing. I have
+The python script topoforge.py generates large scale terrain models as an STL files suitable for 3D printing. I have
 incorporated a number of innovations, notably a high resolution data source and base alignment magnets.
 
 Requires python 3.10 or newer. Install dependencies,
 
     > pip install -r requirements.txt
 
-then create STL terrain models.
+You also need to install blender, e.g.
 
-    > python -m landscape2stl --quad half_dome
+    > brew install blender
+
+Then create STL terrain models.
+
+    > python -m topoforge --quad "Half Dome"
+
+
+The standard quadrangle is 7.5 minutes by 7.5 minutes (1/8 of a degree), at a scale of 1:65250 (about 1 inch to 1 mile). 
 
 
 ## Data Source: 3DEP 1/3rd arc-second
@@ -46,20 +52,12 @@ magnets. (I'm using DIYMAG brand from Amazon, which cost about 5¢ each.) Neighb
 I've also added smaller holes along the sides for alignment pins (Use metal pins, or short lengths of filament).
 
 
-## CLI: landscape2stl.py
-
+## CLI: topoforge.py
+topoforge
 ```
-> python -m landscape2stl --help
+> python -m topoforge --help
 
-usage: landscape2stl.py [-h] 
-                        [--quad QUAD]
-                        [--state STATE]
-                        [--scale SCALE]
-                        [--exaggeration EXAGGERATION]
-                        [--resolution {10,30}]
-                        [--magnets MAGNETS]
-                        [--name NAME] [-v]
-                        [S W N E ...]
+usage: topoforge.py [-h] [--quad QUAD] [--state STATE] [--scale SCALE] [--exaggeration EXAGGERATION] [--magnets MAGNETS] [--filename FILENAME] [-v] [S W N E ...]
 
 Create quadrangle landscape STLs
 
@@ -73,9 +71,8 @@ options:
   --scale SCALE         Map scale
   --exaggeration EXAGGERATION
                         Vertical exaggeration
-  --resolution {10,30}  DEM resolution
   --magnets MAGNETS     Magnet spacing (in degrees)
-  --name NAME           Filename for model
+  --filename FILENAME   Filename for model
   -v, --verbose
 ```
 
@@ -84,14 +81,10 @@ options:
 Latitude/longitude coordinates for slab (Order south edge, west edge, north edge, east edge)
 
 
-### Preset
-A collection of pre-selected regions that override explicit selection of coordinates.  These regions
-were used for development and illustration. Take a look at the code to see what the options are. 
-
 ### Quad
 Alternatively give the name of a USGS 7.5 minute quadrangle map. This will print at 1:62_500 scale.
 
-One resource to find the name of quadrangle maps is https://livingatlas.arcgis.com/topomapexplorer/
+One resource to find the names of quadrangle maps is https://livingatlas.arcgis.com/topomapexplorer/
 (Select 1:24_000 scale for 7.5 minute maps.)
 
 ### Scale
@@ -120,7 +113,7 @@ The spacing between magnets in degrees. If you use a standard scale a reasonable
 * Printer: Bambu Lab P1S
 * Nozzle: 0.4mm
 * Layer height: 0.08mm
-* Infill: 8% 
+* Infill: 6% gyroid 
 * Filament: eSUN PLA PRO (PLA+), Cool White (Sometimes described as Cold White)
 * Brim (for bed adhesion)
 
@@ -134,19 +127,11 @@ To fit the magnets, take a stack of magnets, place over the magnet hole (in the 
 
 
 ## Affixing to wall
-Lighter tiles can be affixed to a wall using four Velcro 3/4" circles (one in each corner). Velcro has the advantages that tiles can bre removed and re-positioned, and there is little give hat allow the magnets to pull neighboring tiles into alignment.  However heavier tiles (62_500 scale for example) require a more robust adhesive. Large 3M Command strips work well, although getting tiles aligned is more tricky.
+Lighter tiles can be affixed to a wall using four Velcro 3/4" circles (one in each corner). Velcro has the advantages that tiles can be removed and re-positioned, and there is little give that allows the magnets to pull neighboring tiles into alignment.  However heavier tiles (62_500 scale for example) require a more robust adhesive. Large 3M Command strips work well, although getting tiles aligned is more tricky.
 
 
 ## Known Issues
 
-### Experimental Prototype
-
-This is an experimental prototype package of beta code for my own amusement. There is no support. Use at your own risk. Caveat emptor.
-
-### Non-manifold models
-The  generated models have bugs. The Bambu Labs slicer will complain about "Non-manifold edges". Often these errors can be ignored, but sometimes the slicer gets upset, and the model needs to be repaired (Unfortunately Bambu only provides the repair functionality on Windows, not on Mac OS) The Cura slicer is more forgiving.
-
-(Some of these errors are being generated by hacks in my code that are there to get adequate performance out of the Computational Solid Geometry package in ezdxf, and some seem to be being generated by ezdxf itself.)
 
 ### Limited data coverage
 
@@ -158,6 +143,6 @@ I'm using a Lambert conformal conic projection with standard parallels of 33 and
 
 ### Shorelines
 
-We drop ocean areas by a small amount to make shorelines more visible in the models. Unfortunately the 3DEP dataset does not make it clear where land ends and the sea begins. You might think that sea is at sea level, and everything above sea level is land, but that produces bad looking coast lines. Setting sea level to 1m  oddly produces better results, but not ideal. Also some areas of California, notable Death Valley, are below sea level. And the sea is not always at zero meters (no not obviously good reason). I've added some heuristics to generate shores lines, but they are under-tested. Use at your own risk.
+We drop ocean areas by a small amount to make shorelines more visible in the models. Unfortunately the 3DEP dataset does not make it clear where land ends and the sea begins. You might think that sea is at sea level, and everything above sea level is land, but that produces bad looking coast lines. Setting sea level to 1m  oddly produces better results, but not ideal. Also some areas of California, notable Death Valley, are below sea level. And the sea is not always at zero meters (for no not obviously good reason). I've added some heuristics to generate shores lines that seem to do an adequate job.
 
 

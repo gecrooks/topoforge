@@ -1,4 +1,4 @@
-# landscape2stl: Modular, high resolution terrain models for 3D printing
+# TopoForge: Modular, high resolution terrain models for 3D printing
 
 
 [Source](https://github.com/gecrooks/topoforge)

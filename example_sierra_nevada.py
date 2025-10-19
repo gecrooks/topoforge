@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-from landscape2stl import create_stl, STLParameters
+import topoforge
+
 
 # https://livingatlas.arcgis.com/topomapexplorer/#maps=42127,41890,41897,42116,42072,40171,182252,39096,40325,39314,40917,40375,40663,40261,39332,39175,40102,40967&loc=-122.59,37.88&LoD=8.00
 # https://livingatlas.arcgis.com/topomapexplorer/#maps=41619,41741,42048,41683,41862,41657,41767,41747,41498,41585,41475,41985,103073,41847,103029,102981,39710,41470,41263,41598,41485,41514,41547&loc=-119.71,39.19&LoD=6.30
@@ -20,7 +21,7 @@ print(description)
 
 tiles = {
     #
-    "Dunsmuir": (41.0, -122.5, 41.5, -122.0),  # Done
+    "Dunsmuir": (41.0, -122.5, 41.5, -122.0),
     "Bartle": (41.0, -122, 41.5, -121.5),
     "McArthur East": (41.0, -121.5, 41.5, -121),
     #
@@ -85,19 +86,28 @@ tiles = {
     "Delano East": (35.5, -119.5, 36, -119),
     "Tobias Peak": (35.5, -119, 36, -118.5),
     "Kernville": (35.5, -118.5, 36, -118),
-    "Ridgecreat West": (35.5, -118, 36, -117.5),
+    "Ridgecrest West": (35.5, -118, 36, -117.5),
     #
     "Caliente": (35, -119, 35.5, -118.5),
     "Mojave": (35, -118.5, 35.5, -118),
 }
 
-params_250000 = STLParameters(
+
+params_250000 = topoforge.STLParameters(
     scale=250000,
     drop_sea_level=False,
 )
 
 
 for name, coords in tiles.items():
-    print(name, coords)
+    text = "\n".join(
+        ["TopoForge", name, str(coords), "scale 1:250,000", "vertical exaggeration x2"]
+    )
     name = name.lower().replace(" ", "_")
-    create_stl(params_250000, coords, f"quad_30m_{name}", verbose=True)
+
+    print(text)
+    topoforge.create_stl(
+        params_250000, coords, f"quad_30m_{name}", text=text, verbose=True
+    )
+
+    print()

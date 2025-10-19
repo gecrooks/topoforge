@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 
-# Copyright 2023-2024, Gavin E. Crooks
+# Copyright 2023-2025, Gavin E. Crooks
 #
 # This source code is licensed under the MIT License
 # found in the LICENSE file in the root directory of this source tree.
 #
 #
-# landscape2stl: High resolution terrain models for 3D printing
+# topoforge: High resolution terrain models for 3D printing
 #
 # See README for more information
 #
@@ -35,7 +35,7 @@ import us
 import xarray as xr
 from numpy.typing import ArrayLike
 from typing_extensions import TypeAlias
-import pyvista 
+import pyvista
 
 # We use many units and coordinate systems.
 # Use TypeAlias's in desperate effort to
@@ -53,8 +53,6 @@ ENU: TypeAlias = tuple[MM, MM, MM]  # East, North, Up model coordinates (millime
 BBox: TypeAlias = tuple[
     Degrees, Degrees, Degrees, Degrees
 ]  # Geographic bounding box: south, west, north, east
-
-
 
 
 # standard_scales = [
@@ -113,7 +111,6 @@ class STLParameters:
     bottom_hole_depth: MM = 9.1
     bottom_hole_sides: int = 24
 
-
     def __post_init__(self):
         if not self.magnet_spacing:
             self.magnet_spacing = self.scale / 2_000_000
@@ -158,7 +155,6 @@ def main() -> int:
 
     parser.add_argument("--scale", dest="scale", type=int, help="Map scale")
 
-
     parser.add_argument(
         "--exaggeration",
         dest="exaggeration",
@@ -171,39 +167,16 @@ def main() -> int:
         "--magnets", dest="magnets", type=float, help="Magnet spacing (in degrees)"
     )
 
-    parser.add_argument("--filename", dest="filename", type=str, help="Filename for model")
+    parser.add_argument(
+        "--filename", dest="filename", type=str, help="Filename for model"
+    )
 
     parser.add_argument("-v", "--verbose", action="store_true")
 
     args = vars(parser.parse_args())
-    name = None
-
-    text = default_text
-
-    if args["quad"] is not None:
-  
-
-        name = args["quad"].lower().replace(" ", "_")
-        coords = quad_coordinates(name, args["state"])
-        args["coordinates"] = coords
-
-        label = usgs_quadrangle_label(coords[0], coords[3])
-
-        text += '\n' + args["quad"] + ', ' + args["state"] + '\n'+label
-
-
-        # args["scale"] = 62_500 # params default to this scale
-
-        if args["filename"] is None:
-            args["filename"] = "quad_" + args["state"].lower() + "_" + name
-
-    if not args["coordinates"]:
-        parser.print_help()
-        return 0
 
     if args["scale"] is None:
         args["scale"] = default_params.scale
-
 
     params = STLParameters(
         scale=args["scale"],
@@ -213,12 +186,25 @@ def main() -> int:
         # projection=args["projection"],
     )
 
+    if args["quad"] is not None:
+        coords = quad_coordinates(args["quad"], args["state"])
+        create_quad_stl(
+            params, coords, filename=args["filename"], verbose=args["verbose"]
+        )
+        return 0
 
-    text = text + '\n' + 'scale 1 : '+f"{params.scale:,}"
+    if not args["coordinates"]:
+        parser.print_help()
+        return 0
 
-
+    text = default_text
+    text = text + "\n" + "scale 1 : " + f"{params.scale:,}"
     create_stl(
-        params, args["coordinates"], filename=args["filename"], text=text,verbose=args["verbose"]
+        params,
+        args["coordinates"],
+        filename=args["filename"],
+        text=text,
+        verbose=args["verbose"],
     )
 
     return 0
@@ -265,14 +251,14 @@ def quad_coordinates(quad_name, state="CA"):
     return southbc, westbc, southbc + 1 / 8, westbc + 1 / 8
 
 
-def quad_from_coordinates(lat, long):
+def quad_from_coordinates(southing, easting):
     df = ustopo_current()
 
     condition = (
-        (df["southbc"].astype(float) <= lat)
-        & (lat < df["northbc"].astype(float))
-        & (df["westbc"].astype(float) <= long)
-        & (long < df["eastbc"].astype(float))
+        (df["southbc"].astype(float) <= southing)
+        & (southing < df["northbc"].astype(float))
+        & (df["westbc"].astype(float) < easting)
+        & (easting <= df["eastbc"].astype(float))
     )
 
     row = df[condition]
@@ -285,16 +271,25 @@ def quad_from_coordinates(lat, long):
     return name, state.abbr
 
 
-def create_quad_stl(name, state, filename=None, verbose=False):
-    coords = quad_coordinates(name, state)
+def create_quad_stl(params, coords, filename=None, verbose=False):
+    params.scale = 62_500
+
+    S, E = coords[0], coords[3]
+    name, state = quad_from_coordinates(S, E)
+    label = usgs_quadrangle_label(S, E)
+
     if filename is None:
-        filename = "quad_" + state.lower() + "_" + name.lower().replace(" ", "_")
+        filename = "quads_" + label
+        if name is not None:
+            filename += "_" + state.lower() + "_" + name.lower().replace(" ", "_")
 
-    params = STLParameters(
-        scale=62_500,
-    )
+    text = "TopoForge"
+    if name is not None:
+        text += "\n" + name + ", " + state
+    text += "\n" + label
+    text += "\n" + "scale 1 : " + f"{params.scale:,}"
 
-    create_stl(params, coords, filename, verbose)
+    create_stl(params, coords, filename, text, verbose)
 
 
 def create_stl(
@@ -335,7 +330,6 @@ def create_stl(
     model = triangulate_surface(surface, boundary, origin, params)
     model = add_base_holes(model, boundary, origin, params)
     model = add_base_text(model, text)
-
 
     if verbose:
         print("Faces:", len(model.faces))
@@ -564,7 +558,6 @@ def triangulate_surface(
     mesh.fix_normals()
     mesh.update_faces(mesh.unique_faces())
 
-
     return mesh
 
 
@@ -701,19 +694,14 @@ def add_base_holes(
         holes.append(hole)
 
     model = trimesh.boolean.difference([model, *holes], backend="blender")
-    model.remove_unreferenced_vertices()
-    model.process(validate=True)
-
-
-    model.remove_unreferenced_vertices()
-    model.fix_normals()
-    model.update_faces(model.unique_faces())
-
 
     return model
 
 
 def add_base_text(model, text):
+    if not text:
+        return model
+
     lines = text.splitlines()
 
     height = 5
@@ -724,15 +712,16 @@ def add_base_text(model, text):
     z_min = model.bounds[0, 2]
 
     for i, line in enumerate(lines):
-        text_mesh = pyvista.Text3D(line, height=height, depth=depth, center=[0,-i*height*1.5,z_min])
+        text_mesh = pyvista.Text3D(
+            line, height=height, depth=depth, center=[0, -i * height * 1.5, z_min]
+        )
         trimesh_mesh = trimesh.Trimesh(
-            vertices=text_mesh.points,
-            faces=text_mesh.faces.reshape(-1, 4)[:, 1:4]
+            vertices=text_mesh.points, faces=text_mesh.faces.reshape(-1, 4)[:, 1:4]
         )
         trimesh_mesh.remove_unreferenced_vertices()
         trimesh_mesh.process(validate=True)
         trimesh_mesh.fix_normals()
-        trimesh_mesh.update_faces(trimesh_mesh.unique_faces())        
+        trimesh_mesh.update_faces(trimesh_mesh.unique_faces())
         meshes.append(trimesh_mesh)
 
     text_model = trimesh.boolean.union(meshes)
@@ -816,13 +805,12 @@ def usgs_quadrangle_label(south, east):
     lat_offset = lat - block_lat
     lon_offset = -(lon - block_lon)
 
-
     # Index within 8x8 grid (7.5 arcmin = 1/8 degree)
     row = int((lat_offset * 8) // 1)  # 0 (south) to 7 (north)
     col = int((lon_offset * 8) // 1)  # 0 (west) to 7 (east)
 
     # Convert column to letter (a–h), row to 1–8 (south to north)
-    col_letter = chr(ord('a') + row)
+    col_letter = chr(ord("a") + row)
     row_number = col + 1
 
     label = f"{block_lat:02d}{abs(block_lon):03d}{col_letter}{row_number}"

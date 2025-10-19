@@ -2,7 +2,8 @@ numpy
 scipy
 xarray
 py3dep
-ezdxf
+trimesh
 pandas
 requests
 us
+pyvista

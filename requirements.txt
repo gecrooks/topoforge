@@ -1,9 +1,0 @@
-numpy
-scipy
-xarray
-py3dep
-trimesh
-pandas
-requests
-us
-pyvista

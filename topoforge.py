@@ -1,4 +1,5 @@
-#!/usr/bin/env python
+#!/usr/bin/env -S uv run --script
+
 
 # Copyright 2023-2025, Gavin E. Crooks
 #
@@ -36,6 +37,17 @@ import xarray as xr
 from numpy.typing import ArrayLike
 from typing_extensions import TypeAlias
 import pyvista
+
+
+from importlib.metadata import version, PackageNotFoundError
+
+project_name = "topoforge"
+
+try:
+    __version__ = version(project_name)
+except PackageNotFoundError:
+    __version__ = "0.0.0+dev"
+
 
 # We use many units and coordinate systems.
 # Use TypeAlias's in desperate effort to
@@ -401,7 +413,6 @@ def elevation_to_surface(
     elevation_array = np.nan_to_num(elevation_array, nan=0.0)
 
     if params.drop_sea_level:
-
         near_death_valley = np.outer(
             (xcoords >= -118) & (xcoords <= -116), (ycoords <= 38) & (ycoords >= 34)
         )
@@ -567,7 +578,6 @@ def add_base_holes(
     origin: LLA,
     params: STLParameters,
 ):
-
     south, west, north, east = boundary
 
     base_alt = params.min_altitude - (
@@ -693,7 +703,7 @@ def add_base_holes(
         hole = make_hole(sides, depth, radius, center, bottom_normal)
         holes.append(hole)
 
-    model = trimesh.boolean.difference([model, *holes], backend="blender")
+    model = trimesh.boolean.difference([model, *holes], engine="blender")
 
     return model
 

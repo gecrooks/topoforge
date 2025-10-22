@@ -1,4 +1,5 @@
-#!/usr/bin/env python
+#!/usr/bin/env -S uv run --script
+
 
 # Copyright 2023-25, Gavin E. Crooks and contributors
 #
@@ -23,8 +24,18 @@ import numpy as np
 import trimesh
 from trimesh import transformations
 
+from importlib.metadata import version, PackageNotFoundError
 
-from landscape2stl import STLParameters
+DIST_NAME = "topoforge"  # use [project].name
+
+try:
+    __version__ = version(DIST_NAME)
+except PackageNotFoundError:
+    __version__ = "0.0.0+dev"
+
+print(__version__)
+
+from topoforge import STLParameters
 
 params = STLParameters()
 magnet_radius = (params.magnet_diameter) / 2 + params.magnet_padding
@@ -75,7 +86,7 @@ cylinder.apply_translation([5, -10.0, 0.0])
 holes.append(cylinder)
 
 
-model = trimesh.boolean.difference([base, *holes], backend="blender")
+model = trimesh.boolean.difference([base, *holes], engine="blender")
 model.remove_unreferenced_vertices()
 model.process(validate=True)
 

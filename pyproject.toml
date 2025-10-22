@@ -1,0 +1,23 @@
+[project]
+name = "topoforge"
+version = "1.0.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "trimesh",
+    "pandas",
+    "py3dep",
+    "us",
+    "pyvista",
+    "networkx",
+    "scipy",
+    "xarray",
+    "requests"
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.1",
+]

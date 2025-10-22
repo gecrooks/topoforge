@@ -17,9 +17,9 @@ Yosemite was printed in 30 segments, held together by magnets installed along th
 The python script topoforge.py generates large scale terrain models as an STL files suitable for 3D printing. I have
 incorporated a number of innovations, notably a high resolution data source and base alignment magnets.
 
-Requires python 3.10 or newer. Install dependencies,
+Python script is best managed with uv.
 
-    > pip install -r requirements.txt
+    > brew install uv
 
 You also need to install blender, e.g.
 
@@ -27,7 +27,7 @@ You also need to install blender, e.g.
 
 Then create STL terrain models.
 
-    > python -m topoforge --quad "Half Dome"
+    > ./topoforge.py --quad "Half Dome"
 
 
 The standard quadrangle is 7.5 minutes by 7.5 minutes (1/8 of a degree), at a scale of 1:65250 (about 1 inch to 1 mile). 

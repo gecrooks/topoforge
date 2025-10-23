@@ -1,14 +1,14 @@
 [project]
 name = "topoforge"
 version = "1.0.0"
-description = "Add your description here"
+description = "Modular, high resolution terrain models for 3D printing"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "numpy",
     "trimesh",
     "pandas",
-    "py3dep",
+    "py3dep==0.18.*", # 0.19.0 has bugs
     "us",
     "pyvista",
     "networkx",

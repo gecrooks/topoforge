@@ -55,9 +55,6 @@ except PackageNotFoundError:
 MM: TypeAlias = float  # millimeters
 Meters: TypeAlias = float  # meters
 Degrees: TypeAlias = float
-ECEF: TypeAlias = tuple[
-    Meters, Meters, Meters
-]  # Earth-Centered, Earth-Fixed (ECEF) Cartesian coordinates
 LLA: TypeAlias = tuple[
     Degrees, Degrees, Meters
 ]  # latitude, longitude, altitude (in meters) coordinates

@@ -55,9 +55,6 @@ except PackageNotFoundError:
 MM: TypeAlias = float  # millimeters
 Meters: TypeAlias = float  # meters
 Degrees: TypeAlias = float
-ECEF: TypeAlias = tuple[
-    Meters, Meters, Meters
-]  # Earth-Centered, Earth-Fixed (ECEF) Cartesian coordinates
 LLA: TypeAlias = tuple[
     Degrees, Degrees, Meters
 ]  # latitude, longitude, altitude (in meters) coordinates
@@ -90,7 +87,7 @@ class STLParameters:
 
     scale: int = 62_500
     resolution: int = 0  # Auto set in __post_init__
-    resolution_choices: tuple[int] = (10, 30)  # meters
+    resolution_choices: tuple[int, int] = (10, 30)  # meters
     pitch: MM = 0.40  # Nozzle size
 
     min_altitude: Meters = -100.0  # Lowest point in US is -86 m
@@ -151,74 +148,81 @@ class STLParameters:
 
 
 def main() -> int:
-    default_params = STLParameters()
-    parser = argparse.ArgumentParser(description="Create quadrangle landscape STLs")
-    parser.add_argument(
+    parser = argparse.ArgumentParser(
+        description="Modular, high resolution terrain models for 3D printing"
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Command_build
+    build = subparsers.add_parser(
+        "build", help="Build an STL from explicit coordinates"
+    )
+    build.add_argument(
         "coordinates",
-        metavar="S W N E",
+        nargs=4,
         type=float,
-        nargs="*",
+        metavar=("S", "W", "N", "E"),
         help="Latitude/longitude coordinates for quadrangle (Order south edge, west edge, north edge, east edge)",
     )
-
-    parser.add_argument("--quad", dest="quad", type=str)
-
-    parser.add_argument("--state", dest="state", type=str, default="CA")
-
-    parser.add_argument("--scale", dest="scale", type=int, help="Map scale")
-
-    parser.add_argument(
+    build.add_argument(
+        "--scale", dest="scale", default=62_500, type=int, help="Map scale"
+    )
+    build.add_argument(
         "--exaggeration",
         dest="exaggeration",
         type=float,
-        # default=1.0,
+        default=1.0,
         help="Vertical exaggeration",
     )
-
-    parser.add_argument(
-        "--magnets", dest="magnets", type=float, help="Magnet spacing (in degrees)"
-    )
-
-    parser.add_argument(
+    build.add_argument(
         "--filename", dest="filename", type=str, help="Filename for model"
     )
 
+    build.add_argument(
+        "--magnets", dest="magnets", type=float, help="Magnet spacing (in degrees)"
+    )
+    build.add_argument("--text", dest="text", type=str)
+    build.set_defaults(func=command_build)
+
+    # Command Quad
+    quad = subparsers.add_parser(
+        "quad", help="Build a standard 1/8 degree USGS named quadrangle"
+    )
+    quad.set_defaults(func=command_quad)
+    quad.add_argument("name", help="USGS quadrangle name.")
+    quad.add_argument("--state", default="CA", help="Defaults California")
+
     parser.add_argument("-v", "--verbose", action="store_true")
+    args = parser.parse_args()
+    args.func(args)
 
-    args = vars(parser.parse_args())
+    return 0
 
-    if args["scale"] is None:
-        args["scale"] = default_params.scale
 
+def command_build(args):
     params = STLParameters(
-        scale=args["scale"],
-        exaggeration=args["exaggeration"],
-        magnet_spacing=args["magnets"],
-        # resolution=args["resolution"],
-        # projection=args["projection"],
+        scale=args.scale,
+        exaggeration=args.exaggeration,
+        magnet_spacing=args.magnets,
     )
 
-    if args["quad"] is not None:
-        coords = quad_coordinates(args["quad"], args["state"])
-        create_quad_stl(
-            params, coords, filename=args["filename"], verbose=args["verbose"]
-        )
-        return 0
+    text = args.text
+    if not text:
+        text = "\n".join(["TopoForge", "scale 1 : " + f"{params.scale:,}"])
 
-    if not args["coordinates"]:
-        parser.print_help()
-        return 0
-
-    text = default_text
-    text = text + "\n" + "scale 1 : " + f"{params.scale:,}"
     create_stl(
         params,
-        args["coordinates"],
-        filename=args["filename"],
+        args.coordinates,
+        filename=args.filename,
         text=text,
-        verbose=args["verbose"],
+        verbose=args.verbose,
     )
 
+
+def command_quad(args):
+    params = STLParameters()
+    coords = quad_coordinates(args.name, args.state)
+    create_quad_stl(params, coords, verbose=args.verbose)
     return 0
 
 
@@ -263,7 +267,7 @@ def quad_coordinates(quad_name, state="CA"):
     return southbc, westbc, southbc + 1 / 8, westbc + 1 / 8
 
 
-def quad_from_coordinates(southing, easting):
+def quad_from_coordinates(southing: float, easting: float) -> Tuple[str, str]:
     df = ustopo_current()
 
     condition = (
@@ -275,12 +279,19 @@ def quad_from_coordinates(southing, easting):
 
     row = df[condition]
     if len(row) == 0:
-        return (None, None)
+        raise ValueError("Invalid state")
     name = row["map_name"].astype(str).iloc[0]
+    if name is None:
+        raise ValueError("Invalid state")
     state_name = row["primary_state"].astype(str).iloc[0]
     state = us.states.lookup(state_name)
+    if state is None:
+        raise ValueError("Invalid state")
+    state_abbr = state.abbr
+    if state_abbr is None:
+        raise ValueError("Invalid state")
 
-    return name, state.abbr
+    return name, state_abbr
 
 
 def create_quad_stl(params, coords, filename=None, verbose=False):
@@ -340,8 +351,9 @@ def create_stl(
         print("Triangulating surface...")
 
     model = triangulate_surface(surface, boundary, origin, params)
-    model = add_base_holes(model, boundary, origin, params)
-    model = add_base_text(model, text)
+    hole_model = add_base_holes(model, boundary, origin, params)
+    text_model = add_base_text(model, text)
+    model = trimesh.boolean.difference([model, hole_model, text_model])
 
     if verbose:
         print("Faces:", len(model.faces))
@@ -567,7 +579,7 @@ def triangulate_surface(
 
     mesh.remove_unreferenced_vertices()
     mesh.fix_normals()
-    mesh.update_faces(mesh.unique_faces())
+    # mesh.update_faces(mesh.unique_faces())
 
     return mesh
 
@@ -703,14 +715,14 @@ def add_base_holes(
         hole = make_hole(sides, depth, radius, center, bottom_normal)
         holes.append(hole)
 
-    model = trimesh.boolean.difference([model, *holes], engine="blender")
+    holes = trimesh.boolean.union(holes, engine="blender")
 
-    return model
+    return holes
 
 
-def add_base_text(model, text):
+def add_base_text(model: trimesh.Trimesh, text: str) -> trimesh.Trimesh:
     if not text:
-        return model
+        return trimesh.Trimesh()
 
     lines = text.splitlines()
 
@@ -737,9 +749,9 @@ def add_base_text(model, text):
     text_model = trimesh.boolean.union(meshes)
     text_model.apply_scale([-1, 1, 1])
 
-    model = trimesh.boolean.difference([model, text_model])
+    # model = trimesh.boolean.difference([model, text_model])
 
-    return model
+    return text_model
 
 
 def triangle_normal(A: ArrayLike, B: ArrayLike, C: ArrayLike) -> np.ndarray:
@@ -747,7 +759,7 @@ def triangle_normal(A: ArrayLike, B: ArrayLike, C: ArrayLike) -> np.ndarray:
     B = np.asarray(B)
     C = np.asarray(C)
     normal = np.cross(B - A, C - A)
-    return trimesh.util.unitize(normal)
+    return np.asarray(trimesh.util.unitize(normal))
 
 
 def lla_to_model(

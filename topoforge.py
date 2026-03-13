@@ -29,12 +29,13 @@ from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import py3dep
+import rasterio
+import rasterio.windows
 import requests
 import trimesh
 import us
-import xarray as xr
 from numpy.typing import ArrayLike
+from rasterio.enums import Resampling
 from typing_extensions import TypeAlias
 import pyvista
 
@@ -86,8 +87,6 @@ class STLParameters:
     """
 
     scale: int = 62_500
-    resolution: int = 0  # Auto set in __post_init__
-    resolution_choices: tuple[int, int] = (10, 30)  # meters
     pitch: MM = 0.40  # Nozzle size
 
     min_altitude: Meters = -100.0  # Lowest point in US is -86 m
@@ -123,12 +122,6 @@ class STLParameters:
     def __post_init__(self):
         if not self.magnet_spacing:
             self.magnet_spacing = self.scale / 2_000_000
-
-        if not self.resolution:
-            if self.scale < 250_000:
-                self.resolution = self.resolution_choices[0]
-            else:
-                self.resolution = self.resolution_choices[1]
 
         if not self.exaggeration:
             # Heuristic for vertical exaggeration
@@ -340,12 +333,12 @@ def create_stl(
     we_steps = int(round(extent_we / params.pitch))
     steps = max(ns_steps, we_steps)
 
-    elevation = download_elevation(boundary, steps, params.resolution, verbose)
+    elevation = download_elevation(boundary, steps, verbose)
 
     if verbose:
         print("Building terrain...")
 
-    surface = elevation_to_surface(elevation, origin, params)
+    surface = elevation_to_surface(elevation, boundary, steps, origin, params)
 
     if verbose:
         print("Triangulating surface...")
@@ -374,20 +367,56 @@ def create_stl(
 
 # end create_stl
 
+USGS_VRT_10M = "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/USGS_Seamless_DEM_13.vrt"
+
+
+def _elevation_bygrid(
+    longs: np.ndarray,
+    lats: np.ndarray,
+    pad: int = 5,
+    resampling: Resampling = Resampling.cubic,
+) -> np.ndarray:
+    """Sample elevation from 3DEP at a grid of lon/lat coordinates.
+
+    Reads a single window covering the full query extent from the USGS
+    10m seamless DEM and resamples to the requested output grid size
+    in one pass, producing smooth sub-pixel interpolation.
+    """
+    nx, ny = len(longs), len(lats)
+    with rasterio.open(USGS_VRT_10M) as src:
+        src_window = rasterio.windows.from_bounds(
+            float(longs.min()),
+            float(lats.min()),
+            float(longs.max()),
+            float(lats.max()),
+            src.transform,
+        )
+        src_window = rasterio.windows.Window(
+            src_window.col_off - pad,
+            src_window.row_off - pad,
+            src_window.width + 2 * pad,
+            src_window.height + 2 * pad,
+        )
+        data = src.read(
+            1,
+            window=src_window,
+            out_shape=(ny, nx),
+            resampling=resampling,
+        )
+        return data.astype(src.dtypes[0])
+
 
 def download_elevation(
     boundary: BBox,
     steps: int,
-    resolution: int,
     verbose: bool = False,
-) -> xr.Dataset | xr.DataArray:
-    elevation: xr.Dataset | xr.DataArray
+) -> np.ndarray:
     south, west, north, east = boundary
 
     xcoords = np.linspace(west, east, steps)
     ycoords = np.linspace(south, north, steps)
 
-    filename = "{}_{:.2f}_{:.2f}_{:.2f}_{:.2f}.nc".format(steps, *boundary)
+    filename = "{}_{:.2f}_{:.2f}_{:.2f}_{:.2f}.npy".format(steps, *boundary)
 
     if not os.path.exists(default_cache):
         os.mkdir(default_cache)
@@ -396,17 +425,15 @@ def download_elevation(
     if not os.path.exists(fname):
         if verbose:
             print("Downloading elevation data... ", end="", flush=True)
-        elevation = py3dep.elevation_bygrid(
-            tuple(xcoords), tuple(ycoords), crs="EPSG:4326", resolution=resolution
-        )  # or 30
+        elevation = _elevation_bygrid(xcoords, ycoords)
 
-        elevation.to_netcdf(fname)
+        np.save(fname, elevation)
         if verbose:
             print("Done", flush=True)
 
     if verbose:
         print("Loading elevation data from cache...", end="", flush=True)
-    elevation = xr.open_dataset(fname)
+    elevation = np.load(fname)
     if verbose:
         print("", flush=True)
 
@@ -414,12 +441,12 @@ def download_elevation(
 
 
 def elevation_to_surface(
-    elevation: xr.Dataset | xr.DataArray, origin: LLA, params: STLParameters
+    elevation: np.ndarray, boundary: BBox, steps: int, origin: LLA, params: STLParameters
 ) -> np.ndarray:
-    ycoords = np.asarray(elevation.coords["y"])
-    xcoords = np.asarray(elevation.coords["x"])
-    steps = len(ycoords)
-    elevation_array = np.asarray(elevation.to_array()).reshape((steps, steps)).T
+    south, west, north, east = boundary
+    xcoords = np.linspace(west, east, steps)
+    ycoords = np.linspace(south, north, steps)
+    elevation_array = elevation.T
 
     # Missing data will be nan
     elevation_array = np.nan_to_num(elevation_array, nan=0.0)

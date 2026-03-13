@@ -10,10 +10,12 @@ dependencies = [
     "pandas",
     "rasterio",
     "us",
-    "pyvista",
+    "fonttools",
     "networkx",
     "scipy",
-    "requests"
+    "requests",
+    "shapely",
+    "mapbox-earcut"
 ]
 
 [dependency-groups]

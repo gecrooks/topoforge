@@ -32,12 +32,12 @@ import pandas as pd
 import rasterio
 import rasterio.windows
 import requests
+import shapely
 import trimesh
 import us
 from numpy.typing import ArrayLike
 from rasterio.enums import Resampling
 from typing_extensions import TypeAlias
-import pyvista
 
 
 from importlib.metadata import version, PackageNotFoundError
@@ -747,6 +747,195 @@ def add_base_holes(
     return holes
 
 
+def _find_system_font() -> str:
+    """Find a sans-serif system font across platforms."""
+    system = sys.platform
+    candidates = []
+    if system == "darwin":
+        candidates = [
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/System/Library/Fonts/SFNSMono.ttf",
+        ]
+    elif system == "win32":
+        windir = os.environ.get("WINDIR", r"C:\Windows")
+        candidates = [
+            os.path.join(windir, "Fonts", "arial.ttf"),
+            os.path.join(windir, "Fonts", "calibri.ttf"),
+        ]
+    else:  # Linux / other
+        candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    raise FileNotFoundError(
+        "No suitable system font found. Searched: " + ", ".join(candidates)
+    )
+
+
+def _bezier_quad(p0: tuple, cp: tuple, p1: tuple, n: int = 8) -> list:
+    """Linearize a quadratic Bezier curve into n line segments."""
+    t = np.linspace(0, 1, n + 1)[1:]
+    return [
+        (
+            (1 - ti) ** 2 * p0[0] + 2 * (1 - ti) * ti * cp[0] + ti**2 * p1[0],
+            (1 - ti) ** 2 * p0[1] + 2 * (1 - ti) * ti * cp[1] + ti**2 * p1[1],
+        )
+        for ti in t
+    ]
+
+
+def _glyph_to_contours(
+    commands: list, scale: float
+) -> list[list[tuple[float, float]]]:
+    """Convert RecordingPen commands to a list of closed contours."""
+    contours: list[list[tuple[float, float]]] = []
+    current: list[tuple[float, float]] = []
+    cursor = (0.0, 0.0)
+
+    for cmd, args in commands:
+        if cmd == "moveTo":
+            if len(current) >= 3:
+                current.append(current[0])
+                contours.append(current)
+            pt = args[0]
+            cursor = (pt[0] * scale, pt[1] * scale)
+            current = [cursor]
+        elif cmd == "lineTo":
+            pt = args[0]
+            cursor = (pt[0] * scale, pt[1] * scale)
+            current.append(cursor)
+        elif cmd == "qCurveTo":
+            points = [(p[0] * scale, p[1] * scale) for p in args]
+            for i in range(len(points) - 1):
+                cp = points[i]
+                if i < len(points) - 2:
+                    ep = (
+                        (cp[0] + points[i + 1][0]) / 2,
+                        (cp[1] + points[i + 1][1]) / 2,
+                    )
+                else:
+                    ep = points[-1]
+                current.extend(_bezier_quad(cursor, cp, ep))
+                cursor = ep
+        elif cmd == "curveTo":
+            # Cubic — rare in TrueType, linearize coarsely
+            pt = args[-1]
+            cursor = (pt[0] * scale, pt[1] * scale)
+            current.append(cursor)
+        elif cmd == "closePath":
+            if len(current) >= 3:
+                current.append(current[0])
+                contours.append(current)
+            current = []
+
+    if len(current) >= 3:
+        current.append(current[0])
+        contours.append(current)
+
+    return contours
+
+
+def _contours_to_polygon(contours: list) -> Optional[shapely.Polygon]:
+    """Build a Shapely polygon from glyph contours, using containment
+    to assign holes to their enclosing exterior rings."""
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+
+    if not contours:
+        return None
+
+    polys = [Polygon(c) for c in contours]
+    # Sort largest first — largest is most likely an exterior
+    polys.sort(key=lambda p: p.area, reverse=True)
+
+    result_polys = []
+    used_as_hole = set()
+
+    for i, ext in enumerate(polys):
+        if i in used_as_hole:
+            continue
+        holes = []
+        for j in range(i + 1, len(polys)):
+            if j in used_as_hole:
+                continue
+            if ext.contains(polys[j]):
+                holes.append(polys[j].exterior.coords)
+                used_as_hole.add(j)
+        result_polys.append(Polygon(ext.exterior.coords, holes))
+
+    result = unary_union(result_polys) if len(result_polys) > 1 else result_polys[0]
+    if not result.is_valid:
+        result = result.buffer(0)
+    return result
+
+
+def _text_to_mesh(text: str, height: float, depth: float, font_path: Optional[str] = None) -> trimesh.Trimesh:
+    """Render a single line of text as a 3D mesh using font outlines."""
+    import logging
+    import warnings
+
+    from fontTools.ttLib import TTFont
+    from fontTools.pens.recordingPen import RecordingPen
+    from shapely.geometry import MultiPolygon
+
+    if font_path is None:
+        font_path = _find_system_font()
+    logging.getLogger("fontTools").setLevel(logging.ERROR)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        font = TTFont(font_path, fontNumber=0)
+    cmap = font.getBestCmap()
+    glyf = font["glyf"]
+    hmtx = font["hmtx"]
+    upem = font["head"].unitsPerEm
+    scale = height / upem
+
+    meshes = []
+    x_offset = 0.0
+
+    for ch in text:
+        code = ord(ch)
+        if code not in cmap:
+            continue
+        glyph_name = cmap[code]
+        advance = hmtx[glyph_name][0] * scale
+
+        glyph = glyf[glyph_name]
+        if glyph.numberOfContours == 0:
+            x_offset += advance
+            continue
+
+        pen = RecordingPen()
+        glyph.draw(pen, glyf)
+        contours = _glyph_to_contours(pen.value, scale)
+        if not contours:
+            x_offset += advance
+            continue
+
+        # Offset contours by current x position
+        contours = [[(x + x_offset, y) for x, y in c] for c in contours]
+        poly = _contours_to_polygon(contours)
+
+        if poly is not None and not poly.is_empty:
+            if isinstance(poly, MultiPolygon):
+                for p in poly.geoms:
+                    meshes.append(trimesh.creation.extrude_polygon(p, height=depth))
+            else:
+                meshes.append(trimesh.creation.extrude_polygon(poly, height=depth))
+
+        x_offset += advance
+
+    font.close()
+
+    if not meshes:
+        return trimesh.Trimesh()
+    return trimesh.util.concatenate(meshes)
+
+
 def add_base_text(model: trimesh.Trimesh, text: str) -> trimesh.Trimesh:
     if not text:
         return trimesh.Trimesh()
@@ -755,28 +944,33 @@ def add_base_text(model: trimesh.Trimesh, text: str) -> trimesh.Trimesh:
 
     height = 5
     depth = 1
+    line_spacing = height * 1.5
 
     meshes = []
-
     z_min = model.bounds[0, 2]
 
     for i, line in enumerate(lines):
-        text_mesh = pyvista.Text3D(
-            line, height=height, depth=depth, center=[0, -i * height * 1.5, z_min]
-        )
-        trimesh_mesh = trimesh.Trimesh(
-            vertices=text_mesh.points, faces=text_mesh.faces.reshape(-1, 4)[:, 1:4]
-        )
-        trimesh_mesh.remove_unreferenced_vertices()
-        trimesh_mesh.process(validate=True)
-        trimesh_mesh.fix_normals()
-        trimesh_mesh.update_faces(trimesh_mesh.unique_faces())
-        meshes.append(trimesh_mesh)
+        line_mesh = _text_to_mesh(line, height=height, depth=depth)
+        if len(line_mesh.faces) == 0:
+            continue
+        # Center each line horizontally
+        line_width = line_mesh.bounds[1, 0] - line_mesh.bounds[0, 0]
+        line_mesh.apply_translation([-line_width / 2, -i * line_spacing, z_min])
+        meshes.append(line_mesh)
 
-    text_model = trimesh.boolean.union(meshes)
+    if not meshes:
+        return trimesh.Trimesh()
+
+    text_model = trimesh.util.concatenate(meshes)
+
+    # Center the text block vertically on the model's base
+    text_bounds = text_model.bounds
+    text_center_y = (text_bounds[0, 1] + text_bounds[1, 1]) / 2
+    model_center_x = (model.bounds[0, 0] + model.bounds[1, 0]) / 2
+    model_center_y = (model.bounds[0, 1] + model.bounds[1, 1]) / 2
+    text_model.apply_translation([model_center_x, model_center_y - text_center_y, 0])
+
     text_model.apply_scale([-1, 1, 1])
-
-    # model = trimesh.boolean.difference([model, text_model])
 
     return text_model
 

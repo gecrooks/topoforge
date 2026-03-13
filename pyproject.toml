@@ -8,12 +8,11 @@ dependencies = [
     "numpy",
     "trimesh",
     "pandas",
-    "py3dep==0.18.*", # 0.19.0 has bugs
+    "rasterio",
     "us",
     "pyvista",
     "networkx",
     "scipy",
-    "xarray",
     "requests"
 ]
 
